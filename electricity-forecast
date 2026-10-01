@@ -1,0 +1,120 @@
+```{r}
+library(tidyverse)
+library(forecast)
+library(zoo)
+
+electricity <- read_csv("~/Desktop/adamgiljic/electricity.csv")
+
+# I remaned the columns so they are cleaner to the eye
+electricity <- electricity |>
+  rename(
+    DATE = observation_date,
+    Price = APU000072610)
+
+# Further more coded the date into a better format
+electricity <- electricity |>
+  mutate(DATE = yearmonth(DATE))
+
+# Converted data to tsibble
+electricity_ts <- electricity |>
+  as_tsibble(index = DATE)
+
+# Making sure the data is organized the correct way
+head(electricity_ts)
+glimpse(electricity_ts)
+nrow(electricity_ts) # Number of rows
+min(electricity_ts$DATE) # Start Date
+max(electricity_ts$DATE) # End Date
+sum(is.na(electricity_ts$Price)) # Missing vlaues (found 2)
+
+# Filling missing values using interpolation
+electricity_ts <- electricity_ts |>
+  mutate(Price = zoo::na.approx(Price, na.rm = FALSE))
+```
+
+```{r}
+# Time plot
+autoplot(electricity_ts, Price) +
+  labs(
+    title = "Average Price of Electricity per Kilowatt Hour in U.S. City Average", x = "Year", y = "Price")
+
+# Seasonal plot
+electricity_ts |>
+  gg_season(Price) +
+  labs(
+    title = "Seasonal Plot of Monthly Electricity Prices", x = "Month", y = "Price")
+
+# Log transformation
+electricity_ts <- electricity_ts |>
+  mutate(log_Price = log(Price))
+
+# First difference
+electricity_ts <- electricity_ts |>
+  mutate(diff_log = difference(log_Price))
+
+autoplot(electricity_ts, diff_log) +
+  labs(title = "Differenced Log Electricity Prices")
+
+# STL decomposition becuase has the data has anchanging trend over time and is vase amount of data with a non-constant seasonality to it.
+decomp <- electricity_ts |>
+  model(STL(log_Price))
+
+components(decomp) |>
+  autoplot() +
+  labs(title = "STL Decomposition of Log Electricity Prices")
+```
+
+```{r}
+# When training data vs testing data its important to know where you begin, my data starts from 1978 of Nov.
+electricity_ts_base <- ts(electricity$Price, 
+                          start = c(1978, 11), 
+                          frequency = 12)
+
+# Training data up to end of 2023
+train <- window(electricity_ts_base, end = c(2023, 12))
+
+# Test data 2024 and onward
+test <- window(electricity_ts_base, start = c(2024, 1))
+
+# Fit Models
+fit_naive <- naive(train)
+fit_ets <- ets(train)
+fit_arima <- auto.arima(train)
+fit_reg <- tslm(train ~ trend + season)
+
+# Forecast
+fc_naive <- naive(train, h = length(test))
+fc_ets <- forecast(fit_ets, h = length(test))
+fc_arima <- forecast(fit_arima, h = length(test))
+fc_reg <- forecast(fit_reg, h = length(test))
+
+# Plot Forecasts
+plot(fc_arima, main = "ARIMA Forecast vs Actual")
+lines(test, col = "red")
+
+# Accuracy
+accuracy(fc_naive, test)
+accuracy(fc_ets, test)
+accuracy(fc_arima, test)
+accuracy(fc_reg, test)
+
+# Residual Diagnostics
+checkresiduals(fit_arima)
+checkresiduals(fit_ets)
+checkresiduals(fit_reg)
+```
+
+```{r}
+# Forecast plots with confidence intervals and interpret the results
+fin_arima <- auto.arima(electricity_ts_base)
+
+# Forecast for the next 24 months
+fin_fc <- forecast(fin_arima, h = 24, level = c(90, 95))
+
+# Ploted final forecast with confidence intervals
+plot(fin_fc,
+     main = "Final ARIMA Forecast of Electricity Prices", xlab = "Year", ylab = "Electricity Price per Kilowatt-Hour")
+
+# Historical series
+lines(electricity_ts_base, col = "black")
+```
